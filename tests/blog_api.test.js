@@ -3,108 +3,210 @@ const supertest = require('supertest');
 const app = require('../app');
 const api = supertest(app);
 const Blog = require('../models/blog');
-const helper = require('./blog_api_test_helper');
+const helper = require('./test_helper');
 
 beforeEach(async () => {
 	await Blog.deleteMany({});
-
-	for (const blog of helper.initialBlogs) {
-		let newBlog = new Blog(blog);
-		await newBlog.save();
-	}
+	await Blog.insertMany(helper.initialBlogs);
 });
 
-test('blogs are returned as json', async () => {
-	const response = await api
-		.get('/api/blogs')
-		.expect(200)
-		.expect('Content-Type', /application\/json/);
+describe('when requesting blogs already saved in the db', () => {
+	test('blogs are returned as json', async () => {
+		const response = await api
+			.get('/api/blogs')
+			.expect(200)
+			.expect('Content-Type', /application\/json/);
 
-	const blogs = response.body;
-	const blogAuthors = blogs.map((b) => {
-		return b.author;
+		const blogs = response.body;
+		const blogAuthors = blogs.map((b) => {
+			return b.author;
+		});
+
+		expect(blogs).toHaveLength(helper.initialBlogs.length);
+		expect(blogAuthors).toContain(helper.initialBlogs[0].author);
 	});
 
-	expect(blogs).toHaveLength(helper.initialBlogs.length);
-	expect(blogAuthors).toContain(helper.initialBlogs[0].author);
-});
+	test('blogs have the unique identifier id (not _id)', async () => {
+		const response = await api
+			.get('/api/blogs')
+			.expect(200)
+			.expect('Content-Type', /application\/json/);
 
-test('blogs have the unique identifier id (not _id)', async () => {
-	const response = await api
-		.get('/api/blogs')
-		.expect(200)
-		.expect('Content-Type', /application\/json/);
-
-	const blogs = response.body;
-	blogs.forEach((blog) => {
-		expect(blog.id).toBeDefined();
+		const blogs = response.body;
+		blogs.forEach((blog) => {
+			expect(blog.id).toBeDefined();
+		});
 	});
 });
 
-test('a valid blog can be added', async () => {
-	const newBlog = {
-		title: 'Test Blog Title',
-		author: 'John Doe',
-		url: 'http://johndoeblog.com',
-		likes: 0,
-	};
+describe('when adding a new blog', () => {
+	test('valid blog gets persisted to the db', async () => {
+		const newBlog = {
+			title: 'Test Blog Title',
+			author: 'John Doe',
+			url: 'http://johndoeblog.com',
+			likes: 0,
+		};
 
-	const response = await api
-		.post('/api/blogs')
-		.send(newBlog)
-		.expect(201)
-		.expect('Content-Type', /application\/json/);
+		const response = await api
+			.post('/api/blogs')
+			.send(newBlog)
+			.expect(201)
+			.expect('Content-Type', /application\/json/);
 
-	const blogsInDb = await helper.blogsInDb();
-	expect(blogsInDb).toHaveLength(helper.initialBlogs.length + 1);
+		const blogsInDb = await helper.blogsInDb();
+		expect(blogsInDb).toHaveLength(helper.initialBlogs.length + 1);
 
-	const createdBlog = response.body;
-	expect(createdBlog).toEqual(expect.objectContaining(newBlog));
+		const createdBlog = response.body;
+		expect(createdBlog).toEqual(expect.objectContaining(newBlog));
+	});
+
+	test('valid blog without likes default to 0 likes', async () => {
+		const newBlog = {
+			title: 'Test Blog Title',
+			author: 'John Doe',
+			url: 'http://johndoeblog.com',
+		};
+
+		const response = await api
+			.post('/api/blogs')
+			.send(newBlog)
+			.expect(201)
+			.expect('Content-Type', /application\/json/);
+
+		const blogsInDb = await helper.blogsInDb();
+		expect(blogsInDb).toHaveLength(helper.initialBlogs.length + 1);
+
+		const createdBlog = response.body;
+		expect(createdBlog.likes).toBeDefined();
+		expect(createdBlog.likes).toBe(0);
+	});
+
+	test('without title it fails with status code 400', async () => {
+		const newBlog = {
+			author: 'John Doe',
+			url: 'http://johndoeblog.com',
+		};
+
+		await api.post('/api/blogs').send(newBlog).expect(400);
+
+		const blogsAfterPost = await helper.blogsInDb();
+		expect(blogsAfterPost).toHaveLength(helper.initialBlogs.length);
+	});
+
+	test('without url it fails with status code 400', async () => {
+		const newBlog = {
+			title: 'Test Blog Title',
+			author: 'John Doe',
+		};
+
+		await api.post('/api/blogs').send(newBlog).expect(400);
+
+		const blogsAfterPost = await helper.blogsInDb();
+		expect(blogsAfterPost).toHaveLength(helper.initialBlogs.length);
+	});
 });
 
-test('newly added blog without likes default to 0 likes', async () => {
-	const newBlog = {
-		title: 'Test Blog Title',
-		author: 'John Doe',
-		url: 'http://johndoeblog.com',
-	};
+describe('when requesting a specific blog', () => {
+	test('with valid id it gets returned as json', async () => {
+		const blogs = await helper.blogsInDb();
+		const blogToRequest = blogs[0];
 
-	const response = await api
-		.post('/api/blogs')
-		.send(newBlog)
-		.expect(201)
-		.expect('Content-Type', /application\/json/);
+		const response = await api
+			.get(`/api/blogs/${blogToRequest.id}`)
+			.expect(200)
+			.expect('Content-Type', /application\/json/);
 
-	const blogsInDb = await helper.blogsInDb();
-	expect(blogsInDb).toHaveLength(helper.initialBlogs.length + 1);
+		const parsedBlog = JSON.parse(JSON.stringify(blogToRequest));
+		expect(response.body).toEqual(parsedBlog);
+	});
 
-	const createdBlog = response.body;
-	expect(createdBlog.likes).toBeDefined();
-	expect(createdBlog.likes).toBe(0);
+	test('with invalid id it fails with status code 400', async () => {
+		const invalidId = '61521c3f78d6472121800e9';
+
+		await api.get(`/api/blogs/${invalidId}`).expect(400);
+	});
+
+	test('with valid but non-existing id it fails with status code 404', async () => {
+		const nonexistingId = await helper.nonexistingId();
+
+		await api.get(`/api/blogs/${nonexistingId}`).expect(404);
+	});
 });
 
-test('blog without title is not added', async () => {
-	const newBlog = {
-		author: 'John Doe',
-		url: 'http://johndoeblog.com',
-	};
+describe('when deleting a blog', () => {
+	test('with valid id it succeeds with status code 204', async () => {
+		const blogsBefore = await helper.blogsInDb();
+		const blogToDelete = blogsBefore[0];
 
-	await api.post('/api/blogs').send(newBlog).expect(400);
+		await api.delete(`/api/blogs/${blogToDelete.id}`).expect(204);
 
-	const blogsAfterPost = await helper.blogsInDb();
-	expect(blogsAfterPost).toHaveLength(helper.initialBlogs.length);
+		const blogsAfter = await helper.blogsInDb();
+		expect(blogsAfter).toHaveLength(blogsBefore.length - 1);
+
+		const blogTitles = blogsAfter.map((b) => {
+			b.title;
+		});
+		expect(blogTitles).not.toContain(blogToDelete.title);
+	});
+
+	test('with invalid id if fails with status code 400', async () => {
+		const invalidId = '61521c3f78d6472121800e9';
+
+		await api.delete(`/api/blogs/${invalidId}`).expect(400);
+	});
 });
 
-test('blog without url is not added', async () => {
-	const newBlog = {
-		title: 'Test Blog Title',
-		author: 'John Doe',
-	};
+describe('when updating a blog', () => {
+	test('with valid id it returns the updated blog as json', async () => {
+		const blogsBefore = await helper.blogsInDb();
+		const blogToUpdate = blogsBefore[0];
 
-	await api.post('/api/blogs').send(newBlog).expect(400);
+		const update = {
+			title: 'React patterns',
+			author: 'Michael Chan',
+			url: 'https://reactpatterns.com/',
+			likes: 7000,
+		};
 
-	const blogsAfterPost = await helper.blogsInDb();
-	expect(blogsAfterPost).toHaveLength(helper.initialBlogs.length);
+		const response = await api
+			.put(`/api/blogs/${blogToUpdate.id}`)
+			.send(update)
+			.expect(200)
+			.expect('Content-Type', /application\/json/);
+
+		const blogsAfter = await helper.blogsInDb();
+		expect(blogsAfter).toHaveLength(blogsBefore.length);
+
+		const updatedBlog = response.body;
+		expect(updatedBlog).toEqual(expect.objectContaining(update));
+	});
+
+	test('with nonexisting id it fails with satus code 404', async () => {
+		const nonexistingId = await helper.nonexistingId();
+
+		const update = {
+			title: 'React patterns',
+			author: 'Michael Chan',
+			url: 'https://reactpatterns.com/',
+			likes: 7000,
+		};
+
+		await api.put(`/api/blogs/${nonexistingId}`).send(update).expect(404);
+	});
+
+	test('with invalid id it fails with status code 400', async () => {
+		const invalidId = '61521c3f78d6472121';
+
+		const update = {
+			title: 'React patterns',
+			author: 'Michael Chan',
+			url: 'https://reactpatterns.com/',
+			likes: 7000,
+		};
+
+		await api.put(`/api/blogs/${invalidId}`).send(update).expect(400);
+	});
 });
 
 afterAll(() => {
