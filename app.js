@@ -24,7 +24,6 @@ mongoose
 app.use(cors());
 app.use(express.json());
 app.use(middleware.requestLogger);
-// app.use(middleware.userExtractor);
 
 app.use('/api/login', loginRouter);
 app.use('/api/users', usersRouter);
